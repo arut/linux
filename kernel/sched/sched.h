@@ -118,6 +118,10 @@ struct task_group {
 	atomic_t load_weight;
 #endif
 
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+	int fifo;
+#endif
+
 #ifdef CONFIG_RT_GROUP_SCHED
 	struct sched_rt_entity **rt_se;
 	struct rt_rq **rt_rq;
@@ -186,6 +190,10 @@ extern void init_tg_cfs_entry(struct task_group *tg, struct cfs_rq *cfs_rq,
 extern void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b);
 extern int sched_group_set_shares(struct task_group *tg, unsigned long shares);
 
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+extern int sched_group_set_fair_fifo(struct task_group *tg, int fair_fifo);
+#endif
+
 extern void __refill_cfs_bandwidth_runtime(struct cfs_bandwidth *cfs_b);
 extern void __start_cfs_bandwidth(struct cfs_bandwidth *cfs_b);
 extern void unthrottle_cfs_rq(struct cfs_rq *cfs_rq);
@@ -215,6 +223,11 @@ struct cfs_rq {
 
 	struct rb_root tasks_timeline;
 	struct rb_node *rb_leftmost;
+
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+	struct list_head fifo_queue;
+	int fifo;
+#endif
 
 	struct list_head tasks;
 	struct list_head *balance_iterator;

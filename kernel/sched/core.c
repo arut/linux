@@ -7862,6 +7862,22 @@ static u64 cpu_rt_period_read_uint(struct cgroup *cgrp, struct cftype *cft)
 }
 #endif /* CONFIG_RT_GROUP_SCHED */
 
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+static int cpu_fair_fifo_write_u64(struct cgroup *cgrp, struct cftype *cftype,
+		u64 shareval)
+{
+	return sched_group_set_fair_fifo(cgroup_tg(cgrp), (int)shareval);
+}
+
+static u64 cpu_fair_fifo_read_u64(struct cgroup *cgrp, struct cftype *cft)
+{
+	struct task_group *tg = cgroup_tg(cgrp);
+
+	return (u64) tg->fifo;
+}
+
+#endif
+
 static struct cftype cpu_files[] = {
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	{
@@ -7896,6 +7912,13 @@ static struct cftype cpu_files[] = {
 		.name = "rt_period_us",
 		.read_u64 = cpu_rt_period_read_uint,
 		.write_u64 = cpu_rt_period_write_uint,
+	},
+#endif
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+	{
+		.name = "fair_fifo",
+		.read_u64 = cpu_fair_fifo_read_u64,
+		.write_u64 = cpu_fair_fifo_write_u64,
 	},
 #endif
 };

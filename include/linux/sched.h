@@ -1189,6 +1189,10 @@ struct sched_entity {
 	struct list_head	group_node;
 	unsigned int		on_rq;
 
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+	struct list_head	fifo_node;
+#endif
+
 	u64			exec_start;
 	u64			sum_exec_runtime;
 	u64			vruntime;

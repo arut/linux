@@ -475,12 +475,28 @@ static void update_min_vruntime(struct cfs_rq *cfs_rq)
 /*
  * Enqueue an entity into the rb-tree:
  */
-static void __enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
+static void __enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+	, int head
+#endif
+)
 {
 	struct rb_node **link = &cfs_rq->tasks_timeline.rb_node;
 	struct rb_node *parent = NULL;
 	struct sched_entity *entry;
 	int leftmost = 1;
+
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+	if (cfs_rq->fifo) {
+		if (head)
+			list_add(&se->fifo_node, &cfs_rq->fifo_queue);
+		else
+			list_add_tail(&se->fifo_node, &cfs_rq->fifo_queue);
+		return;
+	}
+
+	se->fifo_node.next = NULL;
+#endif
 
 	/*
 	 * Find the right place in the rbtree:
@@ -513,6 +529,14 @@ static void __enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 
 static void __dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+	if (se->fifo_node.next) {
+		list_del_init(&se->fifo_node);
+		return;
+	}
+#endif
+
 	if (cfs_rq->rb_leftmost == &se->run_node) {
 		struct rb_node *next_node;
 
@@ -527,6 +551,14 @@ struct sched_entity *__pick_first_entity(struct cfs_rq *cfs_rq)
 {
 	struct rb_node *left = cfs_rq->rb_leftmost;
 
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+	if ((!left || !cfs_rq->fifo)
+		&& (cfs_rq->fifo_queue.next != &cfs_rq->fifo_queue)) {
+		return list_entry(cfs_rq->fifo_queue.next, 
+				struct sched_entity, fifo_node);
+	}
+#endif
+
 	if (!left)
 		return NULL;
 
@@ -535,7 +567,17 @@ struct sched_entity *__pick_first_entity(struct cfs_rq *cfs_rq)
 
 static struct sched_entity *__pick_next_entity(struct sched_entity *se)
 {
-	struct rb_node *next = rb_next(&se->run_node);
+	struct rb_node *next;
+
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+	if (se->fifo_node.next
+		&& se->fifo_node.next != &cfs_rq_of(se)->fifo_queue) {
+		return list_entry(se->fifo_node.next,
+				struct sched_entity, fifo_node);
+	}
+#endif
+
+	next = rb_next(&se->run_node);
 
 	if (!next)
 		return NULL;
@@ -1123,7 +1165,11 @@ enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	update_stats_enqueue(cfs_rq, se);
 	check_spread(cfs_rq, se);
 	if (se != cfs_rq->curr)
-		__enqueue_entity(cfs_rq, se);
+		__enqueue_entity(cfs_rq, se
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+			, 0
+#endif
+		);
 	se->on_rq = 1;
 
 	if (cfs_rq->nr_running == 1) {
@@ -1315,20 +1361,32 @@ static struct sched_entity *pick_next_entity(struct cfs_rq *cfs_rq)
 	 */
 	if (cfs_rq->skip == se) {
 		struct sched_entity *second = __pick_next_entity(se);
-		if (second && wakeup_preempt_entity(second, left) < 1)
+		if (second && (
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+			cfs_rq->fifo ||
+#endif
+			wakeup_preempt_entity(second, left) < 1))
 			se = second;
 	}
 
 	/*
 	 * Prefer last buddy, try to return the CPU to a preempted task.
 	 */
-	if (cfs_rq->last && wakeup_preempt_entity(cfs_rq->last, left) < 1)
+	if (cfs_rq->last && wakeup_preempt_entity(cfs_rq->last, left) < 1
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+			&& !cfs_rq->fifo
+#endif
+	)
 		se = cfs_rq->last;
 
 	/*
 	 * Someone really wants this to run. If it's not unfair, run it.
 	 */
-	if (cfs_rq->next && wakeup_preempt_entity(cfs_rq->next, left) < 1)
+	if (cfs_rq->next && wakeup_preempt_entity(cfs_rq->next, left) < 1
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+			&& !cfs_rq->fifo
+#endif
+	)
 		se = cfs_rq->next;
 
 	clear_buddies(cfs_rq, se);
@@ -1354,7 +1412,11 @@ static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 	if (prev->on_rq) {
 		update_stats_wait_start(cfs_rq, prev);
 		/* Put 'current' back into the tree. */
-		__enqueue_entity(cfs_rq, prev);
+		__enqueue_entity(cfs_rq, prev
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+			,1
+#endif
+		);
 	}
 	cfs_rq->curr = NULL;
 }
@@ -1371,6 +1433,9 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 	 * Update share accounting for long-running entities.
 	 */
 	update_entity_shares_tick(cfs_rq);
+
+	if (cfs_rq->fifo)
+		return;
 
 #ifdef CONFIG_SCHED_HRTICK
 	/*
@@ -5347,6 +5412,11 @@ void init_cfs_rq(struct cfs_rq *cfs_rq)
 #ifndef CONFIG_64BIT
 	cfs_rq->min_vruntime_copy = cfs_rq->min_vruntime;
 #endif
+
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+	INIT_LIST_HEAD(&cfs_rq->fifo_queue);
+	cfs_rq->fifo = 0;
+#endif
 }
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -5541,6 +5611,34 @@ void unregister_fair_sched_group(struct task_group *tg, int cpu) { }
 
 #endif /* CONFIG_FAIR_GROUP_SCHED */
 
+#ifdef CONFIG_FAIR_FIFO_GROUP_SCHED
+
+static DEFINE_MUTEX(fair_fifo_mutex);
+
+int sched_group_set_fair_fifo(struct task_group *tg, int fair_fifo)
+{
+	int i;
+
+	if (!tg->se[0])
+		return -EINVAL;
+
+	mutex_lock(&fair_fifo_mutex);
+	if (tg->fifo == fair_fifo)
+		goto done;
+
+	tg->fifo = fair_fifo;
+	for_each_possible_cpu(i) {
+		struct cfs_rq *cfs_rq = tg->cfs_rq[i];
+		if (cfs_rq)
+			cfs_rq->fifo = fair_fifo;
+	}
+
+done:
+	mutex_unlock(&fair_fifo_mutex);
+	return 0;
+}
+
+#endif
 
 static unsigned int get_rr_interval_fair(struct rq *rq, struct task_struct *task)
 {
